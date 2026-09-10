@@ -1,0 +1,217 @@
+#include <LiquidCrystal.h>
+
+// ======================================================
+// LCD
+// RS, EN, D4, D5, D6, D7
+// ======================================================
+LiquidCrystal lcd(8, 9, 4, 5, 6, 7);
+
+// ======================================================
+// BUTTON
+// LCD keypad SELECT button
+// ======================================================
+const int BUTTON_PIN = A0;
+
+// SELECT button voltage on common 16x2 LCD keypad shields
+const int SELECT_MIN = 600;
+const int SELECT_MAX = 800;
+
+// ======================================================
+// TIMING
+// ======================================================
+const unsigned long DEBOUNCE_TIME = 30;
+const unsigned long LONG_PRESS_TIME = 1000;
+const unsigned long REPEAT_START_TIME = 1500;
+const unsigned long REPEAT_INTERVAL = 500;
+const unsigned long STUCK_TIME = 5000;
+
+// ======================================================
+// BUTTON STATES
+// ======================================================
+enum ButtonState
+{
+  BUTTON_RELEASED,
+  BUTTON_DEBOUNCING,
+  BUTTON_PRESSED,
+  BUTTON_LONG,
+  BUTTON_STUCK
+};
+
+ButtonState state = BUTTON_RELEASED;
+
+unsigned long stateStartTime = 0;
+unsigned long lastRepeatTime = 0;
+
+int repeatCount = 0;
+
+// ======================================================
+// Check SELECT button
+// ======================================================
+bool isSelectPressed()
+{
+  int value = analogRead(BUTTON_PIN);
+
+  return (value >= SELECT_MIN && value <= SELECT_MAX);
+}
+
+// ======================================================
+// LCD helper
+// ======================================================
+void showMessage(const char *line1, const char *line2)
+{
+  lcd.clear();
+
+  lcd.setCursor(0, 0);
+  lcd.print(line1);
+
+  lcd.setCursor(0, 1);
+  lcd.print(line2);
+}
+
+// ======================================================
+// SETUP
+// ======================================================
+void setup()
+{
+  lcd.begin(16, 2);
+
+  showMessage("MODULE 4", "GPIO TASK 1");
+
+  delay(1000);
+
+  showMessage("BUTTON READY", "Press SELECT");
+
+  state = BUTTON_RELEASED;
+  stateStartTime = millis();
+}
+
+// ======================================================
+// LOOP
+// ======================================================
+void loop()
+{
+  unsigned long now = millis();
+
+  bool pressed = isSelectPressed();
+
+  switch (state)
+  {
+    // ==================================================
+    // RELEASED
+    // ==================================================
+    case BUTTON_RELEASED:
+
+      if (pressed)
+      {
+        state = BUTTON_DEBOUNCING;
+        stateStartTime = now;
+      }
+
+      break;
+
+    // ==================================================
+    // DEBOUNCING
+    // ==================================================
+    case BUTTON_DEBOUNCING:
+
+      if (!pressed)
+      {
+        state = BUTTON_RELEASED;
+      }
+      else if ((now - stateStartTime) >= DEBOUNCE_TIME)
+      {
+        state = BUTTON_PRESSED;
+
+        stateStartTime = now;
+        repeatCount = 0;
+
+        showMessage("BUTTON", "PRESSED");
+      }
+
+      break;
+
+    // ==================================================
+    // PRESSED
+    // ==================================================
+    case BUTTON_PRESSED:
+
+      // Button released before long-press threshold
+      if (!pressed)
+      {
+        showMessage("SHORT PRESS", "Detected");
+
+        state = BUTTON_RELEASED;
+        stateStartTime = now;
+      }
+
+      // Long press
+      else if ((now - stateStartTime) >= LONG_PRESS_TIME)
+      {
+        state = BUTTON_LONG;
+
+        lastRepeatTime = now;
+
+        showMessage("LONG PRESS", "Detected");
+      }
+
+      break;
+
+    // ==================================================
+    // LONG PRESS
+    // ==================================================
+    case BUTTON_LONG:
+
+      if (!pressed)
+      {
+        showMessage("LONG PRESS", "Released");
+
+        state = BUTTON_RELEASED;
+        stateStartTime = now;
+      }
+
+      // Repeat event
+      else if ((now - lastRepeatTime) >= REPEAT_INTERVAL)
+      {
+        lastRepeatTime = now;
+
+        repeatCount++;
+
+        lcd.clear();
+
+        lcd.setCursor(0, 0);
+        lcd.print("REPEAT:");
+
+        lcd.setCursor(8, 0);
+        lcd.print(repeatCount);
+
+        lcd.setCursor(0, 1);
+        lcd.print("Holding...");
+      }
+
+      // Stuck key detection
+      if ((now - stateStartTime) >= STUCK_TIME)
+      {
+        state = BUTTON_STUCK;
+
+        showMessage("BUTTON", "STUCK");
+      }
+
+      break;
+
+    // ==================================================
+    // STUCK KEY
+    // ==================================================
+    case BUTTON_STUCK:
+
+      if (!pressed)
+      {
+        showMessage("STUCK CLEARED", "Button released");
+
+        state = BUTTON_RELEASED;
+        stateStartTime = now;
+        repeatCount = 0;
+      }
+
+      break;
+  }
+}
