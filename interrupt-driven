@@ -1,194 +1,52 @@
-#include <LiquidCrystal.h>
+#define INPUT_PIN 2
+#define OUTPUT_PIN 3
 
-// LCD
-LiquidCrystal lcd(8, 9, 4, 5, 6, 7);
+volatile unsigned long startTime = 0;
+volatile unsigned long width = 0;
+volatile unsigned long period = 0;
+volatile unsigned long lastRise = 0;
 
-// Test signal output
-const int SIGNAL_PIN = 12;
+void setup() {
+  pinMode(INPUT_PIN, INPUT);
+  pinMode(OUTPUT_PIN, OUTPUT);
 
-// Interrupt input
-const int INTERRUPT_PIN = 2;
+  Serial.begin(9600);
 
-// 500 us HIGH + 500 us LOW
-const unsigned long HALF_PERIOD_US = 500;
+  attachInterrupt(digitalPinToInterrupt(INPUT_PIN), measure, CHANGE);
+}
 
+void loop() {
 
-// ======================================================
-// ISR variables
-// ======================================================
+  digitalWrite(OUTPUT_PIN, HIGH);
+  delayMicroseconds(500);
+  digitalWrite(OUTPUT_PIN, LOW);
+  delayMicroseconds(500);
 
-volatile unsigned long risingTime = 0;
-volatile unsigned long previousRisingTime = 0;
+  static unsigned long lastPrint = 0;
 
-volatile unsigned long periodTime = 0;
-volatile unsigned long pulseWidth = 0;
+  if (millis() - lastPrint > 500) {
+    lastPrint = millis();
 
-volatile bool measurementReady = false;
+    Serial.print("Width: ");
+    Serial.print(width);
 
-volatile bool signalIsHigh = false;
-
-
-// ======================================================
-// Test signal variables
-// ======================================================
-
-bool signalState = LOW;
-
-unsigned long lastToggleTime = 0;
-
-
-// ======================================================
-// ISR
-// ======================================================
-
-void captureInterrupt()
-{
-  unsigned long now = micros();
-
-  // ----------------------------------------------------
-  // Rising edge
-  // ----------------------------------------------------
-
-  if (signalIsHigh == false)
-  {
-    if (risingTime != 0)
-    {
-      previousRisingTime = risingTime;
-
-      risingTime = now;
-
-      periodTime =
-          risingTime - previousRisingTime;
-
-      measurementReady = true;
-    }
-    else
-    {
-      risingTime = now;
+    if (period > 0) {
+      Serial.print("  Freq: ");
+      Serial.print(1000000UL / period);
     }
 
-    signalIsHigh = true;
-  }
-
-
-  // ----------------------------------------------------
-  // Falling edge
-  // ----------------------------------------------------
-
-  else
-  {
-    if (risingTime != 0)
-    {
-      pulseWidth =
-          now - risingTime;
-    }
-
-    signalIsHigh = false;
+    Serial.println();
   }
 }
 
+void measure() {
+  unsigned long t = micros();
 
-// ======================================================
-// SETUP
-// ======================================================
-
-void setup()
-{
-  lcd.begin(16, 2);
-
-  // Test signal
-  pinMode(SIGNAL_PIN, OUTPUT);
-
-  digitalWrite(SIGNAL_PIN, LOW);
-
-  // Interrupt input
-  pinMode(INTERRUPT_PIN, INPUT);
-
-  // Interrupt on both edges
-  attachInterrupt(
-    digitalPinToInterrupt(INTERRUPT_PIN),
-    captureInterrupt,
-    CHANGE
-  );
-
-  lcd.clear();
-
-  lcd.setCursor(0, 0);
-  lcd.print("MODULE 4");
-
-  lcd.setCursor(0, 1);
-  lcd.print("CAPTURE READY");
-
-  lastToggleTime = micros();
-}
-
-
-// ======================================================
-// LOOP
-// ======================================================
-
-void loop()
-{
-  unsigned long now = micros();
-
-
-  // ====================================================
-  // Generate test square wave
-  // ====================================================
-
-  if ((unsigned long)(now - lastToggleTime) >=
-      HALF_PERIOD_US)
-  {
-    lastToggleTime = now;
-
-    signalState = !signalState;
-
-    digitalWrite(SIGNAL_PIN, signalState);
-  }
-
-
-  // ====================================================
-  // Copy ISR data safely
-  // ====================================================
-
-  unsigned long localPeriod;
-  unsigned long localPulseWidth;
-  bool localReady;
-
-  noInterrupts();
-
-  localPeriod = periodTime;
-  localPulseWidth = pulseWidth;
-  localReady = measurementReady;
-
-  measurementReady = false;
-
-  interrupts();
-
-
-  // ====================================================
-  // Process outside ISR
-  // ====================================================
-
-  if (localReady && localPeriod > 0)
-  {
-    unsigned long frequency =
-        1000000UL / localPeriod;
-
-    lcd.clear();
-
-    lcd.setCursor(0, 0);
-    lcd.print("FREQ:");
-
-    lcd.print(frequency);
-
-    lcd.print("Hz");
-
-    lcd.setCursor(0, 1);
-    lcd.print("WIDTH:");
-
-    lcd.print(localPulseWidth);
-
-    lcd.print("us");
+  if (digitalRead(INPUT_PIN) == HIGH) {
+    period = t - lastRise;
+    lastRise = t;
+    startTime = t;
+  } else {
+    width = t - startTime;
   }
 }
