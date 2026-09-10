@@ -1,0 +1,186 @@
+#include <LiquidCrystal.h>
+
+// LCD
+LiquidCrystal lcd(8, 9, 4, 5, 6, 7);
+
+// GPIO
+const int OUTPUT_PIN = 13;
+const int BUTTON_PIN = A0;
+
+// SELECT button range
+const int SELECT_MIN = 600;
+const int SELECT_MAX = 800;
+
+// System states
+enum SystemState
+{
+  BOOT,
+  INITIALIZING,
+  READY,
+  ENABLED
+};
+
+SystemState state = BOOT;
+
+unsigned long stateStartTime = 0;
+
+// Button variables
+bool previousButton = false;
+bool stableButton = false;
+
+unsigned long debounceStart = 0;
+
+const unsigned long DEBOUNCE_TIME = 30;
+
+
+// ------------------------------------------------------
+// SELECT button
+// ------------------------------------------------------
+bool selectPressed()
+{
+  int value = analogRead(BUTTON_PIN);
+
+  return (value >= SELECT_MIN &&
+          value <= SELECT_MAX);
+}
+
+
+// ------------------------------------------------------
+// LCD message
+// ------------------------------------------------------
+void showMessage(const char *line1, const char *line2)
+{
+  lcd.clear();
+
+  lcd.setCursor(0, 0);
+  lcd.print(line1);
+
+  lcd.setCursor(0, 1);
+  lcd.print(line2);
+}
+
+
+// ------------------------------------------------------
+// Button event
+// ------------------------------------------------------
+bool buttonPressedEvent()
+{
+  bool current = selectPressed();
+
+  if (current != previousButton)
+  {
+    debounceStart = millis();
+    previousButton = current;
+  }
+
+  if ((millis() - debounceStart) >= DEBOUNCE_TIME)
+  {
+    if (current != stableButton)
+    {
+      stableButton = current;
+
+      if (stableButton)
+      {
+        return true;
+      }
+    }
+  }
+
+  return false;
+}
+
+
+// ------------------------------------------------------
+// SETUP
+// ------------------------------------------------------
+void setup()
+{
+  lcd.begin(16, 2);
+
+  // ----------------------------------------------
+  // SAFE DEFAULT
+  // ----------------------------------------------
+
+  digitalWrite(OUTPUT_PIN, LOW);
+  pinMode(OUTPUT_PIN, OUTPUT);
+
+  state = BOOT;
+  stateStartTime = millis();
+
+  showMessage("MODULE 4", "SAFE GPIO");
+}
+
+
+// ------------------------------------------------------
+// LOOP
+// ------------------------------------------------------
+void loop()
+{
+  unsigned long now = millis();
+
+
+  // ==================================================
+  // BOOT
+  // ==================================================
+  if (state == BOOT)
+  {
+    if ((now - stateStartTime) >= 500)
+    {
+      state = INITIALIZING;
+      stateStartTime = now;
+
+      showMessage("INITIALIZING", "OUTPUT OFF");
+    }
+  }
+
+
+  // ==================================================
+  // INITIALIZATION
+  // ==================================================
+  else if (state == INITIALIZING)
+  {
+    if ((now - stateStartTime) >= 500)
+    {
+      state = READY;
+      stateStartTime = now;
+
+      digitalWrite(OUTPUT_PIN, LOW);
+
+      showMessage("SYSTEM READY", "OUTPUT OFF");
+    }
+  }
+
+
+  // ==================================================
+  // READY
+  // ==================================================
+  else if (state == READY)
+  {
+    digitalWrite(OUTPUT_PIN, LOW);
+
+    if (buttonPressedEvent())
+    {
+      state = ENABLED;
+
+      digitalWrite(OUTPUT_PIN, HIGH);
+
+      showMessage("OUTPUT", "ENABLED");
+    }
+  }
+
+
+  // ==================================================
+  // ENABLED
+  // ==================================================
+  else if (state == ENABLED)
+  {
+    if (buttonPressedEvent())
+    {
+      digitalWrite(OUTPUT_PIN, LOW);
+
+      state = READY;
+
+      showMessage("OUTPUT", "DISABLED");
+    }
+  }
+}
