@@ -35,71 +35,31 @@ CONNECTION FOR TASK 3:
 D3 ---------------- D2
        JUMPER
 
-No external signal generator required.
-
-No delay()
-No dynamic memory
-Non-blocking main loop
-============================================================
-*/
-
-
-/* =========================================================
-   COMMON INCLUDES
-   ========================================================= */
-
 #include <Arduino.h>
 #include <LiquidCrystal.h>
 
-
-/* =========================================================
-   COMMON LCD
-   ========================================================= */
-
 LiquidCrystal lcd(8, 9, 4, 5, 6, 7);
 
-
-/* =========================================================
-   TASK 1 + TASK 2
-   ROBUST BUTTON + GPIO SAFETY
-   ========================================================= */
-
-const uint8_t BUTTON_PIN = A0;
-const uint8_t GPIO_OUTPUT_PIN = 13;
-
-
-/*
-   SELECT button voltage range.
-
-   Typical LCD keypad shields give approximately this
-   ADC range for the SELECT button.
-*/
+/* TASK 1 + TASK 2 */
+const byte BUTTON_PIN = A0;
+const byte GPIO_PIN = 13;
 
 const int SELECT_MIN = 600;
 const int SELECT_MAX = 800;
 
-
-/* =========================================================
-   BUTTON TIMING
-   ========================================================= */
-
 const unsigned long DEBOUNCE_TIME = 30UL;
 const unsigned long LONG_PRESS_TIME = 1000UL;
-const unsigned long REPEAT_START_TIME = 1500UL;
 const unsigned long REPEAT_INTERVAL = 500UL;
 const unsigned long STUCK_TIME = 5000UL;
 
-
-/* =========================================================
-   BUTTON STATE MACHINE
-   ========================================================= */
-
+/* BUTTON STATES */
 enum ButtonState
 {
     BUTTON_RELEASED,
-    BUTTON_DEBOUNCING,
+    BUTTON_PRESS_DEBOUNCE,
     BUTTON_PRESSED,
     BUTTON_LONG,
+    BUTTON_RELEASE_DEBOUNCE,
     BUTTON_STUCK
 };
 
@@ -111,67 +71,33 @@ unsigned long lastRepeatTime = 0;
 
 unsigned int repeatCount = 0;
 
+bool wasLongPress = false;
 
-/* =========================================================
-   GPIO STATE
-   ========================================================= */
-
+/* GPIO STATE */
 enum GpioState
 {
-    GPIO_READY,
+    GPIO_DISABLED,
     GPIO_ENABLED
 };
 
-GpioState gpioState = GPIO_READY;
+GpioState gpioState = GPIO_DISABLED;
 
-
-/* =========================================================
-   TASK 3
-   INTERRUPT-DRIVEN INPUT CAPTURE
-   ========================================================= */
-
-const uint8_t INPUT_PIN = 2;
-const uint8_t TEST_SIGNAL_PIN = 3;
-
-
-/*
-   Variables updated by the ISR.
-*/
+/* TASK 3 */
+const byte INPUT_PIN = 2;
+const byte TEST_SIGNAL_PIN = 3;
 
 volatile unsigned long riseTime = 0;
 volatile unsigned long pulseWidth = 0;
 volatile unsigned long signalPeriod = 0;
-volatile bool measurementReady = false;
-
-
-/*
-   Test signal timing.
-
-   HIGH = approximately 500 us
-   LOW  = approximately 500 us
-
-   Period = approximately 1000 us
-   Frequency = approximately 1000 Hz
-*/
 
 const unsigned long HALF_PERIOD_US = 500UL;
 
 unsigned long lastSignalToggle = 0;
-
 bool testSignalState = LOW;
-
-
-/*
-   Serial output timing.
-*/
 
 unsigned long lastMeasurementPrint = 0;
 
-
-/* =========================================================
-   LCD HELPER
-   ========================================================= */
-
+/* LCD */
 void showMessage(const char *line1, const char *line2)
 {
     lcd.clear();
@@ -183,288 +109,144 @@ void showMessage(const char *line1, const char *line2)
     lcd.print(line2);
 }
 
-
-/* =========================================================
-   SELECT BUTTON READING
-   ========================================================= */
-
+/* BUTTON READ */
 bool isSelectPressed()
 {
     int value = analogRead(BUTTON_PIN);
 
-    return (value >= SELECT_MIN &&
-            value <= SELECT_MAX);
+    return value >= SELECT_MIN &&
+           value <= SELECT_MAX;
 }
 
-
-/* =========================================================
-   TASK 3 ISR
-   ========================================================= */
-
+/* TASK 3 INTERRUPT */
 void measureSignal()
 {
-    unsigned long currentTime = micros();
-
-
-    /*
-       Rising edge
-    */
+    unsigned long now = micros();
 
     if (digitalRead(INPUT_PIN) == HIGH)
     {
-        /*
-           Calculate period only after the first rising edge.
-        */
-
         if (riseTime != 0)
         {
-            signalPeriod = currentTime - riseTime;
-            measurementReady = true;
+            signalPeriod = now - riseTime;
         }
 
-        riseTime = currentTime;
+        riseTime = now;
     }
-
-
-    /*
-       Falling edge
-    */
-
     else
     {
         if (riseTime != 0)
         {
-            pulseWidth = currentTime - riseTime;
+            pulseWidth = now - riseTime;
         }
     }
 }
 
-
-/* =========================================================
-   TASK 3
-   TEST SIGNAL GENERATOR
-   ========================================================= */
-
+/* TASK 3 SIGNAL GENERATOR */
 void updateTestSignal()
 {
-    unsigned long currentTime = micros();
+    unsigned long now = micros();
 
-
-    /*
-       Non-blocking 500 us timing.
-
-       No delayMicroseconds().
-    */
-
-    if ((currentTime - lastSignalToggle) >= HALF_PERIOD_US)
+    if ((now - lastSignalToggle) >= HALF_PERIOD_US)
     {
-        lastSignalToggle = currentTime;
+        lastSignalToggle = now;
 
         testSignalState = !testSignalState;
 
-        digitalWrite(
-            TEST_SIGNAL_PIN,
-            testSignalState
-        );
+        digitalWrite(TEST_SIGNAL_PIN, testSignalState);
     }
 }
 
-
-/* =========================================================
-   TASK 1 + TASK 2
-   BUTTON PROCESSING
-   ========================================================= */
-
+/* TASK 1 + TASK 2 */
 void updateButton()
 {
     unsigned long now = millis();
-
     bool pressed = isSelectPressed();
-
 
     switch (buttonState)
     {
-        /* =================================================
-           RELEASED
-           ================================================= */
-
         case BUTTON_RELEASED:
 
             if (pressed)
             {
-                buttonState = BUTTON_DEBOUNCING;
-
+                buttonState = BUTTON_PRESS_DEBOUNCE;
                 buttonStateStartTime = now;
             }
 
             break;
 
 
-        /* =================================================
-           DEBOUNCING
-           ================================================= */
-
-        case BUTTON_DEBOUNCING:
+        case BUTTON_PRESS_DEBOUNCE:
 
             if (!pressed)
             {
                 buttonState = BUTTON_RELEASED;
             }
-            else if ((now - buttonStateStartTime) >=
-                     DEBOUNCE_TIME)
+            else if ((now - buttonStateStartTime) >= DEBOUNCE_TIME)
             {
-                /*
-                   Button is now confirmed pressed.
-                */
-
                 buttonState = BUTTON_PRESSED;
 
                 pressStartTime = now;
-
                 lastRepeatTime = now;
-
                 repeatCount = 0;
+                wasLongPress = false;
 
-
-                /*
-                   TASK 2:
-                   Toggle GPIO immediately after the
-                   debounced SELECT press.
-                */
-
-                if (gpioState == GPIO_READY)
+                if (gpioState == GPIO_DISABLED)
                 {
                     gpioState = GPIO_ENABLED;
 
-                    digitalWrite(
-                        GPIO_OUTPUT_PIN,
-                        HIGH
-                    );
+                    digitalWrite(GPIO_PIN, HIGH);
 
-                    showMessage(
-                        "OUTPUT",
-                        "ENABLED"
-                    );
+                    showMessage("OUTPUT", "ENABLED");
 
-                    Serial.println(
-                        "GPIO: OUTPUT ENABLED"
-                    );
+                    Serial.println("GPIO: OUTPUT ENABLED");
                 }
                 else
                 {
-                    gpioState = GPIO_READY;
+                    gpioState = GPIO_DISABLED;
 
-                    digitalWrite(
-                        GPIO_OUTPUT_PIN,
-                        LOW
-                    );
+                    digitalWrite(GPIO_PIN, LOW);
 
-                    showMessage(
-                        "OUTPUT",
-                        "DISABLED"
-                    );
+                    showMessage("OUTPUT", "DISABLED");
 
-                    Serial.println(
-                        "GPIO: OUTPUT DISABLED"
-                    );
+                    Serial.println("GPIO: OUTPUT DISABLED");
                 }
             }
 
             break;
 
 
-        /* =================================================
-           PRESSED
-           ================================================= */
-
         case BUTTON_PRESSED:
-
-            /*
-               Short press:
-               button released before 1 second.
-            */
 
             if (!pressed)
             {
-                showMessage(
-                    "SHORT PRESS",
-                    "Detected"
-                );
-
-                Serial.println(
-                    "SHORT PRESS Detected"
-                );
-
-                buttonState = BUTTON_RELEASED;
-
+                buttonState = BUTTON_RELEASE_DEBOUNCE;
                 buttonStateStartTime = now;
             }
-
-
-            /*
-               Long press.
-            */
-
-            else if ((now - pressStartTime) >=
-                     LONG_PRESS_TIME)
+            else if ((now - pressStartTime) >= LONG_PRESS_TIME)
             {
                 buttonState = BUTTON_LONG;
-
                 lastRepeatTime = now;
+                wasLongPress = true;
 
-                showMessage(
-                    "LONG PRESS",
-                    "Detected"
-                );
+                showMessage("LONG PRESS", "Detected");
 
-                Serial.println(
-                    "LONG PRESS Detected"
-                );
+                Serial.println("LONG PRESS Detected");
             }
 
             break;
 
 
-        /* =================================================
-           LONG PRESS
-           ================================================= */
-
         case BUTTON_LONG:
-
-            /*
-               Button released.
-            */
 
             if (!pressed)
             {
-                showMessage(
-                    "LONG PRESS",
-                    "Released"
-                );
-
-                Serial.println(
-                    "LONG PRESS Released"
-                );
-
-                buttonState = BUTTON_RELEASED;
-
+                buttonState = BUTTON_RELEASE_DEBOUNCE;
                 buttonStateStartTime = now;
-
-                repeatCount = 0;
             }
-
-
-            /*
-               Repeat events.
-            */
-
-            else if ((now - lastRepeatTime) >=
-                     REPEAT_INTERVAL)
+            else if ((now - lastRepeatTime) >= REPEAT_INTERVAL)
             {
                 lastRepeatTime = now;
-
                 repeatCount++;
-
 
                 lcd.clear();
 
@@ -475,94 +257,77 @@ void updateButton()
                 lcd.setCursor(0, 1);
                 lcd.print("Holding...");
 
-
                 Serial.print("REPEAT:");
                 Serial.println(repeatCount);
             }
-
-
-            /*
-               Stuck-button detection.
-
-               Total continuous press time is measured
-               from pressStartTime.
-            */
 
             if ((now - pressStartTime) >= STUCK_TIME)
             {
                 buttonState = BUTTON_STUCK;
 
-                showMessage(
-                    "BUTTON",
-                    "STUCK"
-                );
+                showMessage("BUTTON", "STUCK");
 
-                Serial.println(
-                    "BUTTON STUCK"
-                );
+                Serial.println("BUTTON STUCK");
             }
 
             break;
 
 
-        /* =================================================
-           STUCK BUTTON
-           ================================================= */
+        case BUTTON_RELEASE_DEBOUNCE:
+
+            if (pressed)
+            {
+                if (wasLongPress)
+                    buttonState = BUTTON_LONG;
+                else
+                    buttonState = BUTTON_PRESSED;
+            }
+            else if ((now - buttonStateStartTime) >= DEBOUNCE_TIME)
+            {
+                if (wasLongPress)
+                {
+                    showMessage("LONG PRESS", "Released");
+
+                    Serial.println("LONG PRESS Released");
+                }
+                else
+                {
+                    showMessage("SHORT PRESS", "Detected");
+
+                    Serial.println("SHORT PRESS Detected");
+                }
+
+                buttonState = BUTTON_RELEASED;
+                repeatCount = 0;
+            }
+
+            break;
+
 
         case BUTTON_STUCK:
 
             if (!pressed)
             {
-                showMessage(
-                    "STUCK CLEARED",
-                    "Button released"
-                );
-
-                Serial.println(
-                    "STUCK CLEARED"
-                );
-
-                buttonState = BUTTON_RELEASED;
-
+                buttonState = BUTTON_RELEASE_DEBOUNCE;
                 buttonStateStartTime = now;
-
-                repeatCount = 0;
             }
 
             break;
     }
 }
 
-
-/* =========================================================
-   TASK 3
-   MEASUREMENT DISPLAY
-   ========================================================= */
-
+/* TASK 3 MEASUREMENT */
 void printMeasurement()
 {
     unsigned long now = millis();
 
-
-    /*
-       Print every 500 ms.
-    */
-
     if ((now - lastMeasurementPrint) < 500UL)
-    {
         return;
-    }
 
     lastMeasurementPrint = now;
 
-
     unsigned long widthCopy;
     unsigned long periodCopy;
-
-
-    /*
-       Safely copy ISR variables.
-    */
 
     noInterrupts();
 
@@ -571,88 +336,42 @@ void printMeasurement()
 
     interrupts();
 
-
     if (periodCopy > 0)
     {
         unsigned long frequency =
             1000000UL / periodCopy;
 
-
         Serial.print("Width: ");
         Serial.print(widthCopy);
 
-        Serial.print(" us");
-
-        Serial.print("  Period: ");
+        Serial.print(" us  Period: ");
         Serial.print(periodCopy);
 
-        Serial.print(" us");
-
-        Serial.print("  Frequency: ");
+        Serial.print(" us  Frequency: ");
         Serial.print(frequency);
 
         Serial.println(" Hz");
     }
 }
 
-
-/* =========================================================
-   SETUP
-   ========================================================= */
-
+/* SETUP */
 void setup()
 {
-    /*
-       -----------------------------------------------------
-       COMMON INITIALIZATION
-       -----------------------------------------------------
-    */
-
     lcd.begin(16, 2);
 
     Serial.begin(9600);
 
+    /* GPIO safe startup */
+    digitalWrite(GPIO_PIN, LOW);
+    pinMode(GPIO_PIN, OUTPUT);
 
-    /*
-       -----------------------------------------------------
-       TASK 2
-       GPIO SAFE INITIALIZATION
-       -----------------------------------------------------
-    */
+    gpioState = GPIO_DISABLED;
 
-    /*
-       Set output LOW before enabling output mode.
-       This establishes the safe state.
-    */
-
-    digitalWrite(GPIO_OUTPUT_PIN, LOW);
-
-    pinMode(GPIO_OUTPUT_PIN, OUTPUT);
-
-    gpioState = GPIO_READY;
-
-
-    /*
-       -----------------------------------------------------
-       TASK 3
-       INTERRUPT + TEST SIGNAL
-       -----------------------------------------------------
-    */
-
+    /* TASK 3 */
     pinMode(INPUT_PIN, INPUT);
 
     pinMode(TEST_SIGNAL_PIN, OUTPUT);
-
     digitalWrite(TEST_SIGNAL_PIN, LOW);
-
-
-    /*
-       D2 receives the signal generated by D3.
-
-       Required jumper:
-
-       D3 -> D2
-    */
 
     attachInterrupt(
         digitalPinToInterrupt(INPUT_PIN),
@@ -660,25 +379,9 @@ void setup()
         CHANGE
     );
 
-
-    /*
-       Initialize test signal timing.
-    */
-
     lastSignalToggle = micros();
 
-
-    /*
-       -----------------------------------------------------
-       STARTUP MESSAGE
-       -----------------------------------------------------
-    */
-
-    showMessage(
-        "MODULE 4",
-        "FIRMWARE READY"
-    );
-
+    showMessage("MODULE 4", "FIRMWARE READY");
 
     Serial.println();
     Serial.println("==============================");
@@ -703,33 +406,13 @@ void setup()
     Serial.println("SYSTEM READY");
 }
 
-
-/* =========================================================
-   LOOP
-   ========================================================= */
-
+/* LOOP */
 void loop()
 {
-    /*
-       TASK 3:
-       Generate approximately 1 kHz signal.
-    */
-
     updateTestSignal();
-
-
-    /*
-       TASK 1 + TASK 2:
-       Process SELECT button.
-    */
 
     updateButton();
 
-
-    /*
-       TASK 3:
-       Print measured signal.
-    */
-
     printMeasurement();
 }
+
